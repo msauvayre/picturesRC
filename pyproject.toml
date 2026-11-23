@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "picturesrc"
+version = "0.1.0"
+description = "Redressement (horizon) et rognage automatique de photos, 100 % hors ligne"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    # Variante "headless" : évite le conflit entre le Qt embarqué par
+    # opencv-python et PySide6 (plantages au lancement sous Linux).
+    "opencv-python-headless>=4.9",
+    "Pillow>=10.0",
+    "PySide6>=6.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyinstaller>=6"]
+
+[project.scripts]
+picturesrc-cli = "picturesrc.cli:main"
+
+[project.gui-scripts]
+picturesrc = "picturesrc.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
