@@ -1,3 +1,39 @@
+# Copyright 2026 Maxime SAUVAYRE
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# "Commons Clause" License Condition v1.0
+#
+# The Software is provided to you by the Licensor under the License, as
+# defined above, subject to the following condition.
+#
+# Without limiting other conditions in the License, the grant of rights under
+# the License will not include, and the License does not grant to you, the
+# right to Sell the Software.
+#
+# For purposes of the foregoing, "Sell" means practicing any or all of the
+# rights granted to you under the License to provide to third parties, for a
+# fee or other consideration (including without limitation fees for hosting
+# or consulting/support services related to the Software), a product or
+# service whose value derives, entirely or substantially, from the
+# functionality of the Software. Any license notice or attribution required
+# by the License must also include this Commons Clause License Condition
+# notice.
+#
+# Software: picturesRC
+# License: Apache License 2.0
+# Licensor: Maxime SAUVAYRE
+
 """Fenêtre principale de picturesRC.
 
 Parcours prévu :
@@ -18,7 +54,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, QSize, Qt, QThreadPool, QTimer
+from PySide6.QtCore import QLibraryInfo, QLocale, QSettings, QSize, Qt, QThreadPool, QTimer, QTranslator
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,6 +71,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QToolBar,
@@ -42,12 +79,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
+from .. import __version__, i18n
 from ..core.imageio import SUPPORTED_EXTENSIONS, is_supported, load_preview
 from ..core.crop import pixel_crop_box, to_norm
 from ..core.orientation import (
     LEFT,
-    QUARTER_LABELS,
     RIGHT,
     normalize_quarter,
     rotate_array_quarter,
@@ -58,6 +94,7 @@ from ..core.inplace import ORIGINALS_DIRNAME, InPlaceSettings
 from ..core.pipeline import crops_to_subject, is_modified
 from ..core.straighten import rotate_array
 from ..core.subject import auto_box
+from ..i18n import tr
 from .viewer import ImageViewer, numpy_to_qimage
 from .workers import THUMB_SIDE, AnalyzeTask, ExportTask, PhotoItem
 
@@ -65,21 +102,15 @@ PREVIEW_SIDE = 1600
 PREVIEW_CACHE = 6
 MAX_ANGLE = 15.0
 
-CROP_LABELS = {
-    "subject": "Rogner autour de l'objet",
-    "aspect": "Rogner (proportions d'origine)",
-    "max_area": "Rogner (surface maximale)",
-    "none": "Ne pas rogner",
-}
+CROP_KEYS = ("subject", "aspect", "max_area", "none")  # libellés : clés « crop.<mode> » des catalogues
 LEVEL_COLORS = {"high": QColor(46, 160, 67), "medium": QColor(230, 150, 20), "low": QColor(210, 50, 50)}
 LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
-LEVEL_FR = {"high": "élevée", "medium": "moyenne", "low": "faible"}
 
 
 class MainWindow(QMainWindow):
     def __init__(self, settings: QSettings | None = None):
         super().__init__()
-        self.setWindowTitle(f"picturesRC {__version__} — redressement de photos")
+        self.setWindowTitle(tr("app.window_title", version=__version__))
         self.resize(1400, 860)
         self.setAcceptDrops(True)
 
@@ -104,18 +135,18 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
-        tb = QToolBar("Principal")
+        tb = QToolBar(tr("toolbar.name"))
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(tb)
 
-        act_folder = QAction("Ajouter un dossier…", self)
+        act_folder = QAction(tr("toolbar.add_folder"), self)
         act_folder.setShortcut(QKeySequence("Ctrl+O"))
         act_folder.triggered.connect(self.add_folder_dialog)
-        act_files = QAction("Ajouter des photos…", self)
+        act_files = QAction(tr("toolbar.add_files"), self)
         act_files.setShortcut(QKeySequence("Ctrl+Shift+O"))
         act_files.triggered.connect(self.add_files_dialog)
-        act_clear = QAction("Vider la liste", self)
+        act_clear = QAction(tr("toolbar.clear"), self)
         act_clear.triggered.connect(self.clear_items)
         tb.addAction(act_folder)
         tb.addAction(act_files)
@@ -123,42 +154,49 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         self.crop_combo = QComboBox()
-        for key, label in CROP_LABELS.items():
-            self.crop_combo.addItem(label, key)
+        for key in CROP_KEYS:
+            self.crop_combo.addItem(tr(f"crop.{key}"), key)
         saved_crop = self.settings.value("crop_mode", "subject")
         self.crop_combo.setCurrentIndex(max(0, self.crop_combo.findData(saved_crop)))
         self.crop_combo.currentIndexChanged.connect(self._on_crop_mode)
         tb.addWidget(self.crop_combo)
 
-        self.auto_validate = QCheckBox("Valider d'office les confiances élevées")
+        self.auto_validate = QCheckBox(tr("toolbar.auto_validate"))
         self.auto_validate.setChecked(self.settings.value("auto_validate", True, type=bool))
         self.auto_validate.toggled.connect(lambda v: self.settings.setValue("auto_validate", v))
         tb.addWidget(self.auto_validate)
         tb.addSeparator()
 
-        self.write_json = QCheckBox("Fichier JSON de traçabilité")
-        self.write_json.setToolTip(
-            "Écrit à côté de chaque original déplacé un <nom>.picturesrc.json\n(angle, rognage, empreintes SHA-256)."
-        )
+        self.write_json = QCheckBox(tr("toolbar.write_json"))
+        self.write_json.setToolTip(tr("toolbar.write_json.tip"))
         self.write_json.setChecked(self.settings.value("write_json", True, type=bool))
         self.write_json.toggled.connect(lambda v: self.settings.setValue("write_json", v))
         tb.addWidget(self.write_json)
 
-        act_out = QAction("Dossier des originaux…", self)
-        act_out.setToolTip(
-            f"Où déplacer les originaux des photos corrigées.\n"
-            f"Par défaut : un sous-dossier « {ORIGINALS_DIRNAME} » dans le dossier de chaque photo."
-        )
+        act_out = QAction(tr("toolbar.originals"), self)
+        act_out.setToolTip(tr("toolbar.originals.tip", dirname=ORIGINALS_DIRNAME))
         act_out.triggered.connect(self.choose_originals_dir)
         tb.addAction(act_out)
-        self.act_export = QAction("Enregistrer les validées", self)
-        self.act_export.setToolTip(
-            "Les photos corrigées remplacent les originaux dans leur dossier ;\n"
-            "les originaux sont déplacés dans le dossier des originaux."
-        )
+        self.act_export = QAction(tr("toolbar.export"), self)
+        self.act_export.setToolTip(tr("toolbar.export.tip"))
         self.act_export.setShortcut(QKeySequence("Ctrl+E"))
         self.act_export.triggered.connect(self.export_validated)
         tb.addAction(self.act_export)
+
+        # Langue de l'interface (appliquée au prochain démarrage), calée à droite
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        self.lang_combo = QComboBox()
+        self.lang_combo.setToolTip(tr("toolbar.language.tip"))
+        self.lang_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.lang_combo.addItem("🌐 " + tr("language.auto"), "")
+        for code, name in i18n.available_languages().items():
+            self.lang_combo.addItem(f"🌐 {name}", code)
+        self.lang_combo.setCurrentIndex(max(0, self.lang_combo.findData(self.settings.value("language", ""))))
+        self.lang_combo.currentIndexChanged.connect(self._on_language)
+        self.lang_combo.setMinimumWidth(self.lang_combo.sizeHint().width() + 12)  # marge pour l'icône 🌐
+        tb.addWidget(self.lang_combo)
 
         # Liste de miniatures
         self.list = QListWidget()
@@ -195,23 +233,23 @@ class MainWindow(QMainWindow):
         self.slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.slider.valueChanged.connect(self._on_slider)
 
-        self.btn_left = QPushButton("↺ 90° (Ctrl+←)")
-        self.btn_left.setToolTip("Faire pivoter de 90° vers la gauche (sens antihoraire).")
+        self.btn_left = QPushButton(tr("btn.rotate_left"))
+        self.btn_left.setToolTip(tr("btn.rotate_left.tip"))
         self.btn_left.clicked.connect(lambda: self.rotate_quarter(LEFT))
-        self.btn_right = QPushButton("↻ 90° (Ctrl+→)")
-        self.btn_right.setToolTip("Faire pivoter de 90° vers la droite (sens horaire).")
+        self.btn_right = QPushButton(tr("btn.rotate_right"))
+        self.btn_right.setToolTip(tr("btn.rotate_right.tip"))
         self.btn_right.clicked.connect(lambda: self.rotate_quarter(RIGHT))
-        self.btn_auto = QPushButton("Auto (A)")
+        self.btn_auto = QPushButton(tr("btn.auto"))
         self.btn_auto.clicked.connect(self.reset_auto)
-        self.btn_zero = QPushButton("0° (R)")
+        self.btn_zero = QPushButton(tr("btn.zero"))
         self.btn_zero.clicked.connect(lambda: self.set_angle(0.0))
-        self.btn_crop = QPushButton("Cadre auto (C)")
-        self.btn_crop.setToolTip("Abandonne le cadre ajusté à la main et revient au cadre automatique.")
+        self.btn_crop = QPushButton(tr("btn.crop_auto"))
+        self.btn_crop.setToolTip(tr("btn.crop_auto.tip"))
         self.btn_crop.clicked.connect(self.viewer.reset_crop)
-        self.btn_orig = QPushButton("Original (O)")
+        self.btn_orig = QPushButton(tr("btn.original"))
         self.btn_orig.setCheckable(True)
         self.btn_orig.toggled.connect(self.viewer.set_show_original)
-        self.btn_validate = QPushButton("Valider et suivante (Entrée)")
+        self.btn_validate = QPushButton(tr("btn.validate"))
         self.btn_validate.setDefault(True)
         self.btn_validate.clicked.connect(self.validate_and_next)
         self.info = QLabel()
@@ -220,19 +258,13 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         controls.addWidget(self.btn_left)
         controls.addWidget(self.btn_right)
-        controls.addWidget(QLabel("Rotation :"))
+        controls.addWidget(QLabel(tr("label.rotation")))
         controls.addWidget(self.spin)
         controls.addWidget(self.slider, 1)
         for b in (self.btn_auto, self.btn_zero, self.btn_crop, self.btn_orig, self.btn_validate):
             controls.addWidget(b)
 
-        hint = QLabel(
-            "Souris : <b>deux clics</b> = coin haut-gauche puis bas-droit du cadre · "
-            "glisser = tracer l'horizon (ou une verticale) · tirez les bords / coins du cadre · "
-            "Ctrl+glisser : déplacer le cadre · Maj+glisser : nouveau cadre<br>"
-            "← → : ±0,1° · Maj+← → : ±1° · Ctrl+← → : 90° à gauche / à droite · ↑ ↓ : photo précédente / suivante · C : cadre auto · "
-            "Échap : annuler le premier clic · G : grille"
-        )
+        hint = QLabel(tr("hint"))
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setStyleSheet("color: gray;")
 
@@ -291,7 +323,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- ajout
     def add_folder_dialog(self) -> None:
         start = self.settings.value("last_dir", str(Path.home()))
-        d = QFileDialog.getExistingDirectory(self, "Choisir un dossier de photos", start)
+        d = QFileDialog.getExistingDirectory(self, tr("dialog.choose_folder"), start)
         if d:
             self.settings.setValue("last_dir", d)
             self.add_paths([Path(d)])
@@ -299,7 +331,8 @@ class MainWindow(QMainWindow):
     def add_files_dialog(self) -> None:
         start = self.settings.value("last_dir", str(Path.home()))
         pattern = " ".join(f"*{e}" for e in sorted(SUPPORTED_EXTENSIONS))
-        files, _ = QFileDialog.getOpenFileNames(self, "Choisir des photos", start, f"Images ({pattern})")
+        files, _ = QFileDialog.getOpenFileNames(self, tr("dialog.choose_photos"), start,
+                                                tr("dialog.images_filter", pattern=pattern))
         if files:
             self.settings.setValue("last_dir", str(Path(files[0]).parent))
             self.add_paths([Path(f) for f in files])
@@ -314,13 +347,13 @@ class MainWindow(QMainWindow):
         # Fichiers temporaires d'un enregistrement en cours ou interrompu : ignorés
         new = [p for p in new if p not in self.index_by_path and ".picturesrc-tmp" not in p.name]
         if not new:
-            self.statusBar().showMessage("Aucune nouvelle image prise en charge.", 4000)
+            self.statusBar().showMessage(tr("status.no_new_images"), 4000)
             return
 
         for p in new:
             self.index_by_path[p] = len(self.items)
             self.items.append(PhotoItem(p))
-            li = QListWidgetItem(self._placeholder_icon(), f"{p.name}\nanalyse…")
+            li = QListWidgetItem(self._placeholder_icon(), f"{p.name}\n{tr('list.analyzing')}")
             li.setSizeHint(QSize(THUMB_SIDE // 2 + 50, THUMB_SIDE // 2 + 70))
             li.setToolTip(str(p))
             self.list.addItem(li)
@@ -404,7 +437,7 @@ class MainWindow(QMainWindow):
             self.viewer.set_source(None)
         elif it.status == "error":
             self.viewer.set_source(None)
-            self.statusBar().showMessage(f"Erreur sur {it.path.name} : {it.error}", 8000)
+            self.statusBar().showMessage(tr("status.error_on", name=it.path.name, error=it.error), 8000)
         else:
             try:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -467,10 +500,9 @@ class MainWindow(QMainWindow):
 
     def _on_crop_points(self, state: int) -> None:
         if state == 1:
-            self.statusBar().showMessage(
-                "Coin supérieur gauche posé : cliquez le coin inférieur droit (Échap pour annuler).")
+            self.statusBar().showMessage(tr("status.crop_first_corner"))
         elif state == -1:
-            self.statusBar().showMessage("Les deux coins sont trop proches : cadre non modifié.", 4000)
+            self.statusBar().showMessage(tr("status.crop_too_close"), 4000)
         else:
             self._update_status()
 
@@ -511,6 +543,15 @@ class MainWindow(QMainWindow):
             self._refresh_list_item(i)
         self._update_controls()
 
+    def _on_language(self) -> None:
+        """Mémorise la langue choisie ; l'interface est construite une fois pour
+        toutes, la nouvelle langue s'applique donc au prochain démarrage."""
+        code = self.lang_combo.currentData()
+        self.settings.setValue("language", code)
+        lang = i18n.match_language(code) or i18n.resolve_language(None)
+        QMessageBox.information(self, i18n.translate(lang, "language.changed.title"),
+                                i18n.translate(lang, "language.changed.text"))
+
     def toggle_grid(self) -> None:
         self.viewer.show_grid = not self.viewer.show_grid
         self.viewer.viewport().update()
@@ -539,15 +580,15 @@ class MainWindow(QMainWindow):
                 self.list.setCurrentRow(j)
                 return
         self._update_controls()
-        self.statusBar().showMessage("Toutes les photos sont validées : vous pouvez exporter (Ctrl+E).", 6000)
+        self.statusBar().showMessage(tr("status.all_validated"), 6000)
 
     # --------------------------------------------------------------- export
     def _originals_label(self) -> str:
-        return str(self.originals_dir) if self.originals_dir else f"« {ORIGINALS_DIRNAME} » dans le dossier de chaque photo"
+        return str(self.originals_dir) if self.originals_dir else tr("originals.default", dirname=ORIGINALS_DIRNAME)
 
     def choose_originals_dir(self) -> None:
         start = str(self.originals_dir or self.settings.value("last_dir", str(Path.home())))
-        d = QFileDialog.getExistingDirectory(self, "Dossier où déplacer les originaux", start)
+        d = QFileDialog.getExistingDirectory(self, tr("dialog.originals_dir"), start)
         if d:
             self.originals_dir = Path(d)
             self._update_status()
@@ -559,7 +600,7 @@ class MainWindow(QMainWindow):
             return
         validated = [it for it in self.items if it.validated and it.status == "ready"]
         if not validated:
-            QMessageBox.information(self, "Enregistrement", "Aucune photo validée à enregistrer.")
+            QMessageBox.information(self, tr("export.title"), tr("export.none_validated"))
             return
         crop_on = self.crop_mode != "none"
         jobs, unchanged = [], 0
@@ -574,18 +615,15 @@ class MainWindow(QMainWindow):
         self._export_counts = {"corrigee": 0, "restauree": 0}
         if not jobs:
             QMessageBox.information(
-                self, "Enregistrement",
-                "Aucune des photos validées n'est modifiée : rien à enregistrer, aucun fichier déplacé.",
+                self, tr("export.title"), tr("export.none_modified"),
             )
             return
         pending = sum(1 for it in self.items if it.status == "pending")
-        msg = (
-            f"{len(jobs)} photo(s) vont être enregistrées dans leur dossier d'origine.\n\n"
-            f"Les originaux des photos corrigées seront DÉPLACÉS vers :\n{self._originals_label()}"
-        )
+        parts = [tr("export.confirm", count=len(jobs), dest=self._originals_label())]
         if pending:
-            msg += f"\n\n{pending} photo(s) encore en cours d'analyse ne seront pas traitées."
-        if QMessageBox.question(self, "Enregistrer", msg + "\n\nContinuer ?") != QMessageBox.StandardButton.Yes:
+            parts.append(tr("export.confirm_pending", count=pending))
+        parts.append(tr("export.confirm_continue"))
+        if QMessageBox.question(self, tr("export.confirm_title"), "\n\n".join(parts)) != QMessageBox.StandardButton.Yes:
             return
         settings = InPlaceSettings(
             originals_dir=self.originals_dir,
@@ -594,7 +632,8 @@ class MainWindow(QMainWindow):
         )
         task = ExportTask(jobs, settings)
         task.signals.progress.connect(self._on_export_progress)
-        task.signals.item_failed.connect(lambda p, m: self.statusBar().showMessage(f"Échec {Path(p).name} : {m}", 8000))
+        task.signals.item_failed.connect(lambda p, m: self.statusBar().showMessage(
+            tr("status.export_failed", name=Path(p).name, error=m), 8000))
         task.signals.finished.connect(self._on_export_finished)
         self._export_task = task
         self.progress.setRange(0, len(jobs))
@@ -622,17 +661,14 @@ class MainWindow(QMainWindow):
         self.act_export.setEnabled(True)
         fixed = self._export_counts.get("corrigee", 0)
         restored = self._export_counts.get("restauree", 0)
-        msg = (
-            f"{fixed} photo(s) corrigée(s) enregistrée(s) dans leur dossier d'origine.\n"
-            f"Originaux déplacés vers : {self._originals_label()}"
-        )
+        parts = [tr("export.done_fixed", count=fixed, dest=self._originals_label())]
         if restored:
-            msg += f"\n\n{restored} photo(s) sans correction : original remis à sa place."
+            parts.append(tr("export.done_restored", count=restored))
         if self._export_unchanged:
-            msg += f"\n\n{self._export_unchanged} photo(s) sans correction laissée(s) telle(s) quelle(s)."
+            parts.append(tr("export.done_unchanged", count=self._export_unchanged))
         if ko:
-            msg += f"\n\n{ko} échec(s) — voir la barre d'état. Les fichiers concernés n'ont pas été modifiés."
-        QMessageBox.information(self, "Enregistrement terminé", msg)
+            parts.append(tr("export.done_failed", count=ko))
+        QMessageBox.information(self, tr("export.done_title"), "\n\n".join(parts))
         self._update_status()
 
     # ------------------------------------------------------- affichage liste
@@ -693,7 +729,7 @@ class MainWindow(QMainWindow):
             return
         it = self.items[idx]
         if it.status == "error":
-            li.setText(f"{it.path.name}\nERREUR")
+            li.setText(f"{it.path.name}\n{tr('list.error')}")
             li.setIcon(self._render_thumb(it))
             li.setToolTip(f"{it.path}\n{it.error}")
             return
@@ -719,41 +755,37 @@ class MainWindow(QMainWindow):
         self._updating = False
         if ready and it.estimate:
             e = it.estimate
+            method = tr("method.contour" if e.source == "contour" else "method.lines")
+            parts = [tr("info.auto", method=method, angle=e.angle, level=tr(f"level.{e.level}"),
+                        confidence=e.confidence)]
             if it.crop is not None and self.crop_mode != "none":
-                cadre = " · cadre ajusté à la main"
+                parts.append(tr("info.crop_manual"))
             elif self.crop_mode == "subject":
-                cadre = (
-                    f" · objet : confiance {LEVEL_FR[it.subject.level]} ({it.subject.confidence:.2f})"
+                parts.append(
+                    tr("info.subject", level=tr(f"level.{it.subject.level}"), confidence=it.subject.confidence)
                     if it.subject
-                    else " · <b>objet non trouvé</b> (cadre surface maximale)"
+                    else tr("info.subject_missing")
                 )
-            else:
-                cadre = ""
-            methode = "contour de l'objet" if e.source == "contour" else "lignes"
-            self.info.setText(
-                f"<b>{it.path.name}</b> — auto ({methode}) : {e.angle:+.2f}° · "
-                f"confiance {LEVEL_FR[e.level]} ({e.confidence:.2f})"
-                + cadre
-                + (f" · pivotée {QUARTER_LABELS[it.quarter]}" if it.quarter else "")
-                + (" · <b>validée</b>" if it.validated else "")
-            )
+            if it.quarter:
+                parts.append(tr("info.rotated", quarter=tr(f"quarter.{it.quarter}")))
+            if it.validated:
+                parts.append(tr("info.validated"))
+            self.info.setText(f"<b>{it.path.name}</b> — " + " · ".join(parts))
         elif it is not None and it.status == "pending":
-            self.info.setText(f"<b>{it.path.name}</b> — analyse en cours…")
+            self.info.setText(f"<b>{it.path.name}</b> — {tr('info.analyzing')}")
         else:
             self.info.setText("")
 
     def _update_status(self) -> None:
         n = len(self.items)
         if not n:
-            self.statusBar().showMessage("Prêt.")
+            self.statusBar().showMessage(tr("status.ready"))
             return
         ready = sum(1 for i in self.items if i.status == "ready")
         val = sum(1 for i in self.items if i.validated)
         to_review = sum(1 for i in self.items if i.status == "ready" and not i.validated)
-        self.statusBar().showMessage(
-            f"{n} photo(s) · analysées {ready}/{n} · validées {val} · à revoir {to_review} · "
-            f"originaux : {self._originals_label()}"
-        )
+        self.statusBar().showMessage(tr("status.summary", n=n, ready=ready, validated=val, review=to_review,
+                                        originals=self._originals_label()))
 
     # --------------------------------------------------------- glisser-déposer
     def dragEnterEvent(self, event):
@@ -767,7 +799,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._export_task is not None:
-            if QMessageBox.question(self, "Export en cours", "Un export est en cours. Quitter quand même ?") != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, tr("quit.title"), tr("quit.text")) != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
             self._export_task.cancelled = True
@@ -776,11 +808,23 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def install_qt_translator(app: QApplication, lang: str) -> None:
+    """Traduit les textes propres à Qt (boutons Oui / Non, dialogues de fichiers…)
+    s'ils sont disponibles pour cette langue ; sinon Qt reste en anglais."""
+    translator = QTranslator(app)
+    if translator.load(QLocale(lang), "qtbase", "_", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(translator)
+        app._qt_translator = translator  # garde une référence
+
+
 def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("picturesRC")
     app.setOrganizationName("picturesRC")
-    win = MainWindow()
+    settings = QSettings("picturesRC", "picturesRC")
+    lang = i18n.setup(settings.value("language", "") or None)
+    install_qt_translator(app, lang)
+    win = MainWindow(settings)
     win.show()
     # Photos ou dossiers passés en argument (ex. « Ouvrir avec… »)
     args = [Path(a) for a in app.arguments()[1:]]

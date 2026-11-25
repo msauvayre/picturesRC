@@ -1,5 +1,7 @@
 # picturesRC
 
+🇫🇷 Français · 🇬🇧 [English](README.en.md)
+
 Redressement automatique de l'horizon et rognage de photos. Application de bureau
 **Windows 11 / Debian**, **100 % hors ligne** (aucun modèle téléchargé, aucun accès réseau).
 
@@ -36,6 +38,25 @@ picturesrc              # interface graphique
 python -m picturesrc    # équivalent
 picturesrc-cli --help   # traitement par lot en ligne de commande
 ```
+
+## Langue de l'interface
+
+L'interface et la ligne de commande sont disponibles en **français** et en **anglais**.
+Par défaut, picturesRC suit la langue du système (anglais si elle n'est pas disponible).
+
+- **Interface graphique** : sélecteur 🌐 à droite de la barre d'outils. Le choix est mémorisé et
+  s'applique **au prochain démarrage**. « Langue du système » revient au choix automatique.
+- **Ligne de commande** : option `--lang` (ex. `picturesrc-cli D:/photos --lang en`).
+- **Variable d'environnement** `PICTURESRC_LANG` (ex. `fr`, `en`) : impose la langue de
+  l'interface graphique (prioritaire sur le sélecteur) et de la ligne de commande (sauf `--lang`).
+
+Les boutons standard de Qt (Oui / Non, dialogues de fichiers) suivent la même langue
+lorsque Qt fournit la traduction correspondante.
+
+Ne sont **pas** traduits, pour que la traçabilité ne dépende pas de la langue : le nom du
+sous-dossier `originaux/` et le contenu des fichiers `.picturesrc.json` (clés et valeurs).
+
+Pour ajouter une langue, voir [Ajouter une langue](#ajouter-une-langue).
 
 ## Utilisation de l'interface
 
@@ -173,6 +194,74 @@ Convention d'angle : rotation à appliquer, en degrés, **positive = antihoraire
 ```bash
 pytest
 ```
+
+## Ajouter une langue
+
+Chaque langue est un fichier JSON dans `src/picturesrc/i18n/locales/`, nommé d'après le code
+de la langue : `en.json`, `fr.json`, `de.json`, `es.json`, `pt_BR.json`… (code ISO 639-1,
+éventuellement suivi de `_` et du code du pays). **Il suffit d'ajouter ce fichier** : la langue
+apparaît dans le sélecteur 🌐 et dans `--lang`, sans toucher au code. L'anglais (`en.json`)
+est la langue de référence.
+
+1. **Créer le catalogue** à partir de l'anglais (exemple pour l'allemand) :
+
+   ```bash
+   python -m picturesrc.i18n new de Deutsch
+   ```
+
+   Cela crée `locales/de.json` : une copie de `en.json` dont `_language_name` vaut `Deutsch`
+   (le nom affiché dans le sélecteur, écrit dans la langue elle-même). On peut aussi copier
+   `en.json` à la main.
+
+2. **Traduire les valeurs**, jamais les clés. Extrait :
+
+   ```json
+   {
+     "_language_name": "Deutsch",
+     "_translators": "Votre nom",
+     "toolbar.add_folder": "Ordner hinzufügen…",
+     "status.error_on": "Fehler bei {name}: {error}"
+   }
+   ```
+
+   Règles :
+   - recopier les **`{variables}` à l'identique**, y compris leur format (`{angle:+.2f}`,
+     `{name:40.40s}`) ; leur ordre peut changer ;
+   - pour des accolades littérales, écrire `{{` et `}}` ;
+   - conserver `\n` (retour à la ligne), les balises `<b>…</b>` et `<br>`, et `%(default)s`
+     dans les textes de l'aide en ligne de commande ;
+   - ne pas changer les **touches** indiquées entre parenthèses (`A`, `R`, `C`, `O`, `Ctrl+←`…) :
+     ce sont les raccourcis réels, identiques dans toutes les langues ;
+   - les clés commençant par `_` sont des métadonnées (`_language_name` obligatoire,
+     `_translators` facultatif).
+
+3. **Contrôler** le catalogue (clés manquantes ou en trop, variables différentes de l'anglais) :
+
+   ```bash
+   python -m picturesrc.i18n check de    # sans argument : toutes les langues
+   pytest tests/test_i18n.py
+   ```
+
+4. **Essayer** sans modifier ses réglages :
+
+   ```bash
+   PICTURESRC_LANG=de picturesrc                 # Debian
+   ```
+   ```powershell
+   $env:PICTURESRC_LANG = "de"; picturesrc       # Windows (PowerShell)
+   ```
+
+5. **Application autonome** : reconstruire le paquet (`python packaging/build.py`), ou déposer
+   le fichier dans `dist/picturesRC/_internal/picturesrc/i18n/locales/` d'un paquet existant.
+
+Une clé absente d'un catalogue s'affiche en anglais : une traduction partielle reste
+utilisable. Une variante régionale (`fr_CA`) se rabat sur la langue de base (`fr`).
+`python -m picturesrc.i18n` liste les langues installées.
+
+**Pour les développeurs** : tout texte affiché passe par `tr("section.cle", variable=…)`
+(`from picturesrc.i18n import tr`). Une nouvelle clé s'ajoute d'abord à `en.json`, puis à chaque
+autre catalogue : les tests échouent si une clé utilisée dans le code est absente de `en.json`,
+ou si un catalogue est incomplet.
 
 ## Application autonome (sans Python installé)
 

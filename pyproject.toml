@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Redressement (horizon) et rognage automatique de photos, 100 % hors ligne"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
 dependencies = [
     "numpy>=1.26",
     # Variante "headless" : évite le conflit entre le Qt embarqué par
@@ -28,6 +29,10 @@ picturesrc = "picturesrc.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Catalogues de traduction : un fichier JSON par langue
+picturesrc = ["i18n/locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

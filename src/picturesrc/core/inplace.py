@@ -1,3 +1,39 @@
+# Copyright 2026 Maxime SAUVAYRE
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# "Commons Clause" License Condition v1.0
+#
+# The Software is provided to you by the Licensor under the License, as
+# defined above, subject to the following condition.
+#
+# Without limiting other conditions in the License, the grant of rights under
+# the License will not include, and the License does not grant to you, the
+# right to Sell the Software.
+#
+# For purposes of the foregoing, "Sell" means practicing any or all of the
+# rights granted to you under the License to provide to third parties, for a
+# fee or other consideration (including without limitation fees for hosting
+# or consulting/support services related to the Software), a product or
+# service whose value derives, entirely or substantially, from the
+# functionality of the Software. Any license notice or attribution required
+# by the License must also include this Commons Clause License Condition
+# notice.
+#
+# Software: picturesRC
+# License: Apache License 2.0
+# Licensor: Maxime SAUVAYRE
+
 """Enregistrement « sur place » : la photo corrigée prend la place de
 l'original dans le dossier source, et l'original est déplacé.
 
@@ -27,6 +63,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..i18n import tr
 from .crop import Box
 from .imageio import load_image, save_image
 from .orientation import normalize_quarter, rotate_image_quarter
@@ -78,7 +115,7 @@ def _move_verified(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
     if sha256_file(src) != sha256_file(dst):
         dst.unlink(missing_ok=True)
-        raise OSError(f"Copie de {src} vers {dst} non conforme (SHA-256 différent).")
+        raise OSError(tr("error.copy_mismatch", src=src, dst=dst))
     src.unlink()
 
 
@@ -121,7 +158,7 @@ def apply_in_place(
     if original is not None:
         original = Path(original)
         if not original.exists():
-            raise FileNotFoundError(f"Original introuvable : {original}")
+            raise FileNotFoundError(tr("error.original_missing", path=original))
 
     # --- rien à faire, ou retour à l'original --------------------------------
     if not modified:
@@ -134,7 +171,7 @@ def apply_in_place(
         finally:
             tmp.unlink(missing_ok=True)
         if sha256_file(path) != sha256_file(original):
-            raise OSError(f"Restauration de {path} non conforme (SHA-256 différent).")
+            raise OSError(tr("error.restore_mismatch", path=path))
         original.unlink()
         _sidecar_path(original).unlink(missing_ok=True)
         return InPlaceResult(path, None, "restauree")
